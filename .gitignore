@@ -1,0 +1,19 @@
+# Build output
+bin/
+obj/
+
+# Visual Studio and local user settings
+.vs/
+*.user
+*.suo
+
+# macOS metadata
+.DS_Store
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# Exclude PDF from Git
+/Documents

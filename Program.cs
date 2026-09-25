@@ -1,157 +1,101 @@
 ﻿using Qdrant.Client;
 using RAGOnMyMac;
-using RAGOnMyMac.Models;
-using UglyToad.PdfPig;
+using RAGOnMyMac.Agents;
+using RAGOnMyMac.Configuration;
+using RAGOnMyMac.Knowledge;
 
-const string ollamaUrl = "http://localhost:11434";
-const string embeddingModel = "nomic-embed-text";
-const string generativeModel = "llama3.2";
-
-const string qdrantHost = "localhost";
-const int qdrantPort = 6334;
-
-const string collectionName = "rag-on-mac";
+var options = KnowledgeHubOptions.FromEnvironment();
 
 using var httpClient = new HttpClient
 {
-  BaseAddress = new Uri(ollamaUrl)
+    BaseAddress = new Uri(options.OllamaUrl),
+    Timeout = TimeSpan.FromSeconds(45)
 };
 
-var qdrantClient = new QdrantClient(
-    qdrantHost,
-    qdrantPort);
-
 var ollama = new OllamaService(
-    httpClient,
-    embeddingModel,
-    generativeModel);
+        httpClient,
+        options.EmbeddingModel,
+        options.GenerativeModel);
+
+var qdrantClient = new QdrantClient(
+        options.QdrantHost,
+        options.QdrantPort);
 
 var vectorStore = new QdrantVectorStore(
-    qdrantClient,
-    collectionName);
+        qdrantClient,
+        options.CollectionName);
 
-var documentPath = Directory
-    .GetFiles("Documents", "*.pdf")
-    .SingleOrDefault()
-    ?? throw new FileNotFoundException(
-        "Place a PDF file in the Documents folder.");
-
-using var pdf = PdfDocument.Open(documentPath);
-
-var text = string.Join(
-    Environment.NewLine + Environment.NewLine,
-    pdf.GetPages().Select(page => page.Text));
-
-var chunks = SplitDocument(
-        Path.GetFileName(documentPath),
-        text)
-    .ToList();
+var documentSource = new PdfKnowledgeSource(options);
+var chunks = documentSource.LoadChunks();
 
 if (chunks.Count == 0)
 {
-  throw new InvalidOperationException(
-      "The document contains no chunks.");
+    throw new InvalidOperationException(
+            "The configured PDF documents contain no readable text.");
 }
 
-var firstEmbedding =
-    await ollama.GenerateEmbeddingAsync(
-        chunks[0].Text);
-
-await vectorStore.EnsureCollectionAsync(
-    (ulong)firstEmbedding.Length);
-
-await vectorStore.StoreAsync(
-    chunks[0],
-    firstEmbedding);
+var firstEmbedding = await ollama.GenerateEmbeddingAsync(chunks[0].Text);
+await vectorStore.EnsureCollectionAsync((ulong)firstEmbedding.Length);
+await vectorStore.StoreAsync(chunks[0], firstEmbedding);
 
 foreach (var chunk in chunks.Skip(1))
 {
-  var embedding =
-      await ollama.GenerateEmbeddingAsync(
-          chunk.Text);
-
-  await vectorStore.StoreAsync(
-      chunk,
-      embedding);
+    var embedding = await ollama.GenerateEmbeddingAsync(chunk.Text);
+    await vectorStore.StoreAsync(chunk, embedding);
 }
 
-Console.WriteLine(
-    $"Indexed {chunks.Count} document chunks.");
+Console.WriteLine($"Indexed {chunks.Count} document chunks from the configured knowledge base.");
+Console.WriteLine("Agentic developer knowledge hub ready.");
+Console.WriteLine("Ask a question, or type 'exit' to quit.");
 
-Console.WriteLine();
-Console.WriteLine(
-    "Ask a question about the document.");
-Console.WriteLine(
-    "Type 'exit' to quit.");
+var coordinator = new KnowledgeCoordinator(
+        new RuleBasedQueryRouter(),
+        new OfficialResourceProvider(httpClient, options),
+        new ResourceAnalyzer(),
+        ollama,
+        vectorStore,
+        options.RetrievalLimit);
 
 while (true)
 {
-  Console.Write("\nYou: ");
+    Console.Write("\nYou: ");
+    var question = Console.ReadLine();
 
-  var question = Console.ReadLine();
-
-  if (string.IsNullOrWhiteSpace(question))
-  {
-    continue;
-  }
-
-  if (question.Equals(
-      "exit",
-      StringComparison.OrdinalIgnoreCase))
-  {
-    break;
-  }
-
-  var questionEmbedding =
-      await ollama.GenerateEmbeddingAsync(question);
-
-  var relevantChunks =
-      await vectorStore.SearchAsync(
-          questionEmbedding,
-          limit: 5);
-
-  var answer =
-      await ollama.GenerateAnswerAsync(
-          question,
-          relevantChunks);
-
-  Console.WriteLine();
-  Console.WriteLine($"Assistant: {answer}");
-}
-
-static IEnumerable<DocumentChunk> SplitDocument(
-    string documentName,
-    string text,
-    int chunkSize = 800,
-    int overlap = 100)
-{
-  var index = 0;
-  var start = 0;
-
-  while (start < text.Length)
-  {
-    var length = Math.Min(
-        chunkSize,
-        text.Length - start);
-
-    var chunkText = text
-        .Substring(start, length)
-        .Trim();
-
-    if (!string.IsNullOrWhiteSpace(chunkText))
+    if (string.IsNullOrWhiteSpace(question))
     {
-      yield return new DocumentChunk(
-          Guid.NewGuid(),
-          documentName,
-          index++,
-          chunkText);
+        continue;
     }
 
-    if (start + length >= text.Length)
+    if (question.Equals("exit", StringComparison.OrdinalIgnoreCase))
     {
-      break;
+        break;
     }
 
-    start += length - overlap;
-  }
+    try
+    {
+        var result = await coordinator.AnswerAsync(question);
+
+        Console.WriteLine();
+        Console.WriteLine($"Route: {result.Route}");
+        Console.WriteLine($"Grounding: {result.GroundingStatus}");
+        Console.WriteLine($"Assistant: {result.Text}");
+
+        if (result.Evidence.Count > 0)
+        {
+            Console.WriteLine("\nSources:");
+            foreach (var source in result.Evidence.Select(item => item.Citation).Distinct())
+            {
+                Console.WriteLine($"- {source}");
+            }
+        }
+
+        foreach (var warning in result.Trace.Warnings)
+        {
+            Console.WriteLine($"Warning: {warning}");
+        }
+    }
+    catch (Exception exception) when (exception is HttpRequestException or InvalidOperationException)
+    {
+        Console.WriteLine($"Unable to answer: {exception.Message}");
+    }
 }

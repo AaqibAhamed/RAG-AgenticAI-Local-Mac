@@ -12,4 +12,9 @@
     <PackageReference Include="UglyToad.PdfPig" Version="1.7.0-custom-5" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Remove="RAGOnMyMac.Tests/**/*.cs" />
+    <None Remove="RAGOnMyMac.Tests/**/*" />
+  </ItemGroup>
+
 </Project>

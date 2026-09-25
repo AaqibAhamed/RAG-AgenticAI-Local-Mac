@@ -41,7 +41,11 @@ public sealed class QdrantVectorStore(QdrantClient client, string collectionName
         {
             ["documentName"] = chunk.DocumentName,
             ["chunkIndex"] = chunk.ChunkIndex,
-            ["text"] = chunk.Text
+            ["text"] = chunk.Text,
+            ["sourceType"] = chunk.SourceType,
+            ["sourceUri"] = chunk.SourceUri ?? string.Empty,
+            ["pageNumber"] = chunk.PageNumber ?? 0,
+            ["title"] = chunk.Title ?? chunk.DocumentName
         }
     };
 
@@ -61,10 +65,32 @@ public sealed class QdrantVectorStore(QdrantClient client, string collectionName
         cancellationToken: cancellationToken);
 
     return [.. results
-            .Select(result => new SearchResult(
-                result.Payload["documentName"].StringValue,
-                (int)result.Payload["chunkIndex"].IntegerValue,
-                result.Payload["text"].StringValue,
-                result.Score))];
+        .Select(result => new SearchResult(
+          result.Payload["documentName"].StringValue,
+          (int)result.Payload["chunkIndex"].IntegerValue,
+          result.Payload["text"].StringValue,
+          result.Score,
+                ReadString(result.Payload, "sourceType", "attached-document") ?? "attached-document",
+          ReadString(result.Payload, "sourceUri", null),
+          ReadPageNumber(result.Payload),
+          ReadString(result.Payload, "title", null)))];
+  }
+
+  private static string? ReadString(
+    Google.Protobuf.Collections.MapField<string, Value> payload,
+    string key,
+    string? fallback)
+  {
+    return payload.TryGetValue(key, out var value) && !string.IsNullOrWhiteSpace(value.StringValue)
+      ? value.StringValue
+      : fallback;
+  }
+
+  private static int? ReadPageNumber(
+    Google.Protobuf.Collections.MapField<string, Value> payload)
+  {
+    return payload.TryGetValue("pageNumber", out var value) && value.IntegerValue > 0
+      ? (int)value.IntegerValue
+      : null;
   }
 }

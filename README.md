@@ -1,211 +1,145 @@
-# RAG On My Mac
+# Agentic Developer Knowledge Hub
 
-A local Retrieval-Augmented Generation (RAG) command-line application written in C#. It extracts text from a PDF, creates embeddings with Ollama, stores the embeddings in Qdrant, and answers questions using retrieved PDF content.
+A local-first C# knowledge hub for software developers and architects. The application combines attached PDF knowledge with curated official Microsoft/.NET documentation. A router selects the evidence path, specialist services retrieve and analyze sources, and the final RAG response includes grounding metadata and citations.
 
-## How It Works
+## Architecture
 
 ```mermaid
 flowchart LR
-    PDF[PDF in Documents/] --> Extract[PdfPig text extraction]
-    Extract --> Chunk[800-character chunks\n100-character overlap]
-    Chunk --> Embed[Ollama embedding model]
-    Embed --> Store[Qdrant vector collection]
-    Question[User question] --> QEmbed[Ollama question embedding]
-    QEmbed --> Search[Qdrant cosine search\ntop 5 chunks]
-    Store --> Search
-    Search --> Generate[Ollama generative model]
-    Question --> Generate
-    Generate --> Answer[Answer in terminal]
+    PDF[PDFs in Documents/] --> Ingest[PDF knowledge source]
+    Ingest --> Embed[Ollama embeddings]
+    Embed --> Qdrant[Qdrant source-aware collection]
+
+    Question[Developer question] --> Router[Query router]
+    Router -->|AttachedDocuments| Retrieve[Vector retrieval]
+    Router -->|OfficialDocumentation| Research[Allowlisted official resource provider]
+    Router -->|Combined| Retrieve
+    Router -->|Combined| Research
+    Research --> Analyze[Resource analysis agent]
+    Retrieve --> Evidence[Normalized evidence]
+    Analyze --> Evidence
+    Evidence --> Synthesize[Grounded Ollama answer]
+    Question --> Synthesize
+    Synthesize --> Answer[Cited answer and execution trace]
 ```
 
-At startup, the application:
+The current implementation has these responsibilities:
 
-1. Finds a PDF in `Documents/`.
-2. Extracts text from every PDF page using PdfPig.
-3. Splits the extracted text into overlapping chunks.
-4. Generates an embedding for each chunk with `nomic-embed-text`.
-5. Stores the chunks and embeddings in the `rag-on-mac` Qdrant collection.
-6. Starts an interactive question-and-answer loop.
+- `RuleBasedQueryRouter` selects attached documents, official documentation, or both.
+- `PdfKnowledgeSource` indexes every PDF in `Documents/` and preserves page metadata.
+- `OfficialResourceProvider` fetches only HTTPS resources from the configured Microsoft/.NET allowlist.
+- `ResourceAnalyzer` converts fetched resources into normalized evidence.
+- `KnowledgeCoordinator` runs the selected branches and passes their evidence to the final generator.
+- `QdrantVectorStore` stores source-aware chunks with stable identifiers for repeatable indexing.
 
-For each question, the application retrieves the five most similar chunks and sends only those chunks, together with the question, to `llama3.2`.
+The local provider boundary is intentionally explicit. Microsoft Foundry/Azure can be added as a hosted model or remote-agent provider later without changing the query, evidence, or answer contracts. Azure credentials are not required for this local milestone.
 
 ## Requirements
 
-- macOS or another operating system supported by .NET and the local services
+- macOS or another operating system supported by .NET
 - .NET 10 SDK
-- [Ollama](https://ollama.com/) running at `http://localhost:11434`
-- Qdrant running with its gRPC endpoint available at `localhost:6334`
-- A text-based PDF file in the `Documents/` folder
+- Ollama running at `http://localhost:11434`
+- Qdrant running with its gRPC endpoint at `localhost:6334`
+- At least one text-based PDF in `Documents/`
 
-The application currently expects exactly one PDF in `Documents/`. The checked-in example is `Documents/aspnc.pdf`. The file name does not need to be `aspnc.pdf`, but it must have a `.pdf` extension.
-
-## Start the Services
-
-Verify Ollama:
-
-```bash
-curl http://localhost:11434/api/tags
-```
-
-Download the models used by the application:
+Start the local services:
 
 ```bash
 ollama pull nomic-embed-text
 ollama pull llama3.2
-```
-
-Start Qdrant with Docker:
-
-```bash
 docker run --name qdrant -p 6333:6333 -p 6334:6334 qdrant/qdrant
 ```
 
-The application uses Qdrant's gRPC port, `6334`.
-
-## Run the Application
-
-From the repository root:
+Run from the repository root:
 
 ```bash
 dotnet restore
 dotnet run
 ```
 
-The application indexes the PDF before displaying the prompt:
+The application indexes all PDFs before opening the question loop:
 
 ```text
-Indexed 15 document chunks.
-
-Ask a question about the document.
-Type 'exit' to quit.
-
-You: What is the main topic of this document?
-Assistant: ...
+Indexed 15 document chunks from the configured knowledge base.
+Agentic developer knowledge hub ready.
+Ask a question, or type 'exit' to quit.
 ```
 
-Type `exit` to stop the application. Blank questions are ignored.
+## Routing behavior
+
+Questions mentioning an attached document, PDF, or document content use the local Qdrant knowledge base. Questions asking for official, current, documentation, or API-reference information use the allowlisted official sources. A question that requests both attached context and current official information uses both branches.
+
+Official research currently uses a small built-in Microsoft/.NET catalog:
+
+- `learn.microsoft.com`
+- `dotnet.microsoft.com`
+- `docs.microsoft.com`
+
+The allowlist is checked before fetching. Fetched pages are cited by URL. Attached material is cited by document name and page when page metadata is available.
 
 ## Configuration
 
-The current configuration is defined as constants at the top of `Program.cs`:
+Configuration is read from environment variables, with these defaults:
 
-| Setting           | Current value            | Purpose                                         |
-| ----------------- | ------------------------ | ----------------------------------------------- |
-| `ollamaUrl`       | `http://localhost:11434` | Ollama HTTP endpoint                            |
-| `embeddingModel`  | `nomic-embed-text`       | Model used for document and question embeddings |
-| `generativeModel` | `llama3.2`               | Model used to generate answers                  |
-| `qdrantHost`      | `localhost`              | Qdrant host                                     |
-| `qdrantPort`      | `6334`                   | Qdrant gRPC port                                |
-| `collectionName`  | `rag-on-mac`             | Qdrant collection name                          |
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `RAG_DOCUMENTS_PATH` | `Documents` | PDF directory |
+| `OLLAMA_URL` | `http://localhost:11434` | Ollama endpoint |
+| `OLLAMA_EMBEDDING_MODEL` | `nomic-embed-text` | Embedding model |
+| `OLLAMA_GENERATIVE_MODEL` | `llama3.2` | Answer model |
+| `QDRANT_HOST` | `localhost` | Qdrant host |
+| `QDRANT_PORT` | `6334` | Qdrant gRPC port |
+| `QDRANT_COLLECTION` | `rag-on-mac` | Vector collection |
+| `RAG_CHUNK_SIZE` | `800` | Chunk size in characters |
+| `RAG_CHUNK_OVERLAP` | `100` | Chunk overlap in characters |
+| `RAG_RETRIEVAL_LIMIT` | `5` | Retrieved document chunks |
+| `RAG_OFFICIAL_DOMAINS` | Microsoft/.NET domains | Comma-separated HTTPS allowlist |
 
-The chunking settings are currently defined in `SplitDocument`:
+For example:
 
-- Chunk size: `800` characters
-- Overlap: `100` characters
-- Search limit: `5` chunks per question
+```bash
+RAG_RETRIEVAL_LIMIT=8 RAG_OFFICIAL_DOMAINS=learn.microsoft.com,dotnet.microsoft.com dotnet run
+```
 
-Changing these values requires editing the source and rerunning the application.
+Chunk IDs are deterministic for a document name, page, index, and text, so restarting the application upserts the same Qdrant points. Existing points from removed documents are not automatically deleted yet; use a new collection name or remove the old collection when replacing a knowledge base.
 
-## Project Structure
+## Tests
+
+The focused tests use no network, Ollama, Qdrant, or Azure credentials:
+
+```bash
+dotnet test RAGOnMyMac.Tests/RAGOnMyMac.Tests.csproj
+```
+
+They currently cover route selection and evidence analysis. A live smoke test requires both local services and a PDF.
+
+## Trust boundaries and limitations
+
+- The initial external catalog is curated; this is not an open-web search engine.
+- HTML extraction is intentionally lightweight and should be replaced with a stronger content parser as source coverage grows.
+- The current router is deterministic. A model-backed planner can implement the same `IQueryRouter` contract later.
+- The resource analyzer currently normalizes source evidence and claims; it does not yet perform deep semantic claim verification.
+- Scanned PDFs, OCR, non-PDF formats, broad vendor coverage, and autonomous write actions are not implemented.
+- Remote Microsoft Foundry agent-to-agent communication is an extension point, not a local runtime dependency.
+
+## Project structure
 
 ```text
 RAGOnMyMac/
-├── Program.cs                         # PDF indexing and interactive Q&A loop
-├── OllamaService.cs                   # Ollama embedding and generation calls
-├── IOllamaService.cs                  # Ollama service contract
-├── QdrantVectorStore.cs               # Collection, storage, and similarity search
+├── Agents/
+│   ├── AgentServices.cs
+│   └── KnowledgeCoordinator.cs
+├── Configuration/
+│   └── KnowledgeHubOptions.cs
+├── Knowledge/
+│   ├── OfficialResourceProvider.cs
+│   └── PdfKnowledgeSource.cs
 ├── Models/
-│   ├── DocumentChunk.cs               # Chunk identity, document name, index, and text
-│   ├── SearchResult.cs                # Retrieved chunk and similarity score
-│   ├── OllamaEmbeddingResponse.cs     # Ollama embedding response model
-│   └── OllamaGenerateResponse.cs      # Ollama generation response model
-├── Documents/
-│   └── aspnc.pdf                      # PDF input document
-├── RAGOnMyMac.csproj                   # .NET project and package references
-└── README.md                          # Project documentation
+│   ├── AgentModels.cs
+│   ├── DocumentChunk.cs
+│   └── SearchResult.cs
+├── RAGOnMyMac.Tests/
+├── Program.cs
+├── OllamaService.cs
+└── QdrantVectorStore.cs
 ```
-
-## Dependencies
-
-The project uses:
-
-- `Qdrant.Client` `1.19.0` for vector storage and cosine similarity search
-- `UglyToad.PdfPig` `1.7.0-custom-5` for PDF text extraction
-
-The Ollama models and Qdrant server are external local services, not NuGet dependencies.
-
-## Important Limitations
-
-- **Text-based PDFs only:** PdfPig extracts embedded PDF text. Scanned or image-only PDFs require OCR, which is not currently implemented.
-- **One PDF per run:** `Directory.GetFiles("Documents", "*.pdf").SingleOrDefault()` requires exactly one matching PDF. Zero PDFs produces an error; multiple PDFs cause startup to fail.
-- **Relative paths:** Run the application from the repository root so the relative `Documents/` path resolves correctly.
-- **Re-indexing:** The application indexes the PDF on every startup. Existing points remain in Qdrant, so changing the PDF can leave old chunks in the collection. Delete the `rag-on-mac` collection or change `collectionName` before indexing a replacement document.
-- **No page metadata:** Stored metadata contains the PDF file name, chunk index, and text, but not the source page number.
-- **No automated test project:** Validation currently consists of building and running the application against the local Ollama and Qdrant services.
-
-## Troubleshooting
-
-### No PDF found
-
-Place exactly one `.pdf` file in `Documents/`, then run the application from the repository root.
-
-### Multiple PDFs found
-
-Move all but one PDF out of `Documents/`. Multi-document indexing is not implemented yet.
-
-### Ollama connection failure
-
-Confirm that Ollama is running and that the endpoint responds:
-
-```bash
-curl http://localhost:11434/api/tags
-```
-
-Also confirm that both required models have been downloaded:
-
-```bash
-ollama list
-```
-
-### Qdrant connection failure
-
-Confirm that the Qdrant container is running and that port `6334` is published:
-
-```bash
-docker ps
-```
-
-### Model not found
-
-Pull the missing model:
-
-```bash
-ollama pull nomic-embed-text
-ollama pull llama3.2
-```
-
-### Stale answers after replacing the PDF
-
-Delete the existing `rag-on-mac` collection before re-indexing, or change `collectionName` in `Program.cs`. The current application does not remove old vectors automatically.
-
-## Build
-
-```bash
-dotnet build
-```
-
-The project targets `net10.0` and uses nullable reference types and implicit global usings.
-
-## Possible Extensions
-
-- Support multiple PDFs and store document-level metadata.
-- Add OCR for scanned PDFs.
-- Preserve page numbers in chunks and cite source pages in answers.
-- Move configuration to `appsettings.json` or environment variables.
-- Add collection cleanup and incremental indexing.
-- Add automated tests for PDF extraction, chunking, and retrieval.
-- Expose the RAG pipeline through a web API or user interface.
-
-## License
-
-This project is provided as-is for educational purposes.

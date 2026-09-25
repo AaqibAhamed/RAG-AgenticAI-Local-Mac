@@ -6,80 +6,102 @@ namespace RAGOnMyMac;
 public sealed class OllamaService(
   HttpClient httpClient, string embeddingModel, string generativeModel) : IOllamaService
 {
-  private readonly HttpClient _httpClient = httpClient;
-  private readonly string _embeddingModel = embeddingModel;
-  private readonly string _generativeModel = generativeModel;
+    private readonly HttpClient _httpClient = httpClient;
+    private readonly string _embeddingModel = embeddingModel;
+    private readonly string _generativeModel = generativeModel;
 
-  public async Task<float[]> GenerateEmbeddingAsync(
-    string text, CancellationToken cancellationToken = default)
-  {
-    var request = new
+    public async Task<float[]> GenerateEmbeddingAsync(
+      string text, CancellationToken cancellationToken = default)
     {
-      model = _embeddingModel,
-      input = text
-    };
+        var request = new
+        {
+            model = _embeddingModel,
+            input = text
+        };
 
-    using var response = await _httpClient.PostAsJsonAsync(
-        "/api/embed",
-        request,
-        cancellationToken);
-
-    response.EnsureSuccessStatusCode();
-
-    var result = await response.Content
-        .ReadFromJsonAsync<OllamaEmbeddingResponse>(
+        using var response = await _httpClient.PostAsJsonAsync(
+            "/api/embed",
+            request,
             cancellationToken);
 
-    return result?.Embeddings.FirstOrDefault()
-        ?? throw new InvalidOperationException(
-            "Ollama returned no embedding.");
-  }
+        response.EnsureSuccessStatusCode();
 
-  public async Task<string> GenerateAnswerAsync(
-    string question, IReadOnlyList<SearchResult> results, CancellationToken cancellationToken = default)
-  {
-    var context = string.Join(
-        "\n\n",
-        results.Select(result => result.Text));
+        var result = await response.Content
+            .ReadFromJsonAsync<OllamaEmbeddingResponse>(
+                cancellationToken);
 
-    var prompt = $"""
-        Answer the question using only the provided context.
+        return result?.Embeddings.FirstOrDefault()
+            ?? throw new InvalidOperationException(
+                "Ollama returned no embedding.");
+    }
+
+    public async Task<string> GenerateAnswerAsync(
+      string question, IReadOnlyList<SearchResult> results, CancellationToken cancellationToken = default)
+    {
+        var evidence = results
+          .Select(result => new EvidenceItem(
+            $"{result.DocumentName}:{result.ChunkIndex}",
+            result.Title ?? result.DocumentName,
+            result.Text,
+            result.SourceType,
+            result.SourceUri ?? result.DocumentName,
+            result.Score,
+            DateTimeOffset.UtcNow,
+            result.PageNumber))
+          .ToList();
+
+        return await GenerateGroundedAnswerAsync(question, evidence, cancellationToken);
+    }
+
+    public async Task<string> GenerateGroundedAnswerAsync(
+      string question,
+      IReadOnlyList<EvidenceItem> evidence,
+      CancellationToken cancellationToken = default)
+    {
+        var context = string.Join(
+          "\n\n",
+          evidence.Select((item, index) =>
+            $"[{index + 1}] {item.Title}\n{item.Text}\nCitation: {item.Citation}"));
+
+        var prompt = $"""
+        Answer the software-development question using only the provided evidence.
 
         If the context contains enough information to answer the question,
         provide a direct answer based on that information.
 
-        Only say that there is not enough information when the context
-        does not contain the answer.
+        If the evidence does not contain the answer, say that the evidence
+        is insufficient. Do not use general model knowledge as a substitute.
 
-        Do not speculate or add information that is not present in the context.
+        Cite supporting evidence inline using [1], [2], and so on.
+        Do not speculate or add information that is not present in the evidence.
 
-        Context:
+        Evidence:
         {context}
 
         Question:
         {question}
         """;
 
-    var request = new
-    {
-      model = _generativeModel,
-      prompt,
-      stream = false
-    };
+        var request = new
+        {
+            model = _generativeModel,
+            prompt,
+            stream = false
+        };
 
-    using var response = await _httpClient.PostAsJsonAsync(
-        "/api/generate",
-        request,
-        cancellationToken);
-
-    response.EnsureSuccessStatusCode();
-
-    var result = await response.Content
-        .ReadFromJsonAsync<OllamaGenerateResponse>(
+        using var response = await _httpClient.PostAsJsonAsync(
+            "/api/generate",
+            request,
             cancellationToken);
 
-    return result?.Response
-        ?? throw new InvalidOperationException(
-            "Ollama returned no response.");
-  }
+        response.EnsureSuccessStatusCode();
+
+        var result = await response.Content
+            .ReadFromJsonAsync<OllamaGenerateResponse>(
+                cancellationToken);
+
+        return result?.Response
+            ?? throw new InvalidOperationException(
+                "Ollama returned no response.");
+    }
 }

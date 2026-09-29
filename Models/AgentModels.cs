@@ -9,6 +9,11 @@ public enum QueryRoute
 
 public sealed record UserQuery(string Text, DateTimeOffset ReceivedAt);
 
+public sealed record TechnologyProfile(
+    string Name,
+    IReadOnlySet<string> Keywords,
+    IReadOnlyList<ResourceCandidate> OfficialResources);
+
 public sealed record ResourceCandidate(
     string Title,
     Uri Uri,

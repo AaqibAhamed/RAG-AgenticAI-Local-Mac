@@ -1,6 +1,6 @@
 # Agentic Developer Knowledge Hub
 
-A local-first C# knowledge hub for software developers and architects. The application combines attached PDF knowledge with curated official Microsoft/.NET documentation. A router selects the evidence path, specialist services retrieve and analyze sources, and the final RAG response includes grounding metadata and citations.
+A local-first C# knowledge hub for software developers and architects. The application combines attached PDF knowledge with technology-specific official documentation. Semantic Kernel orchestrates the typed agent workflow, while Ollama and Qdrant provide the local model and retrieval services.
 
 ## Architecture
 
@@ -25,9 +25,11 @@ flowchart LR
 
 The current implementation has these responsibilities:
 
+- `SemanticKernelAgentOrchestrator` executes the typed agent workflow through a Semantic Kernel `KernelFunction`.
 - `RuleBasedQueryRouter` selects attached documents, official documentation, or both.
 - `PdfKnowledgeSource` indexes every PDF in `Documents/` and preserves page metadata.
-- `OfficialResourceProvider` fetches only HTTPS resources from the configured Microsoft/.NET allowlist.
+- `TechnologyCatalog` maps technologies to canonical documentation, including Angular, Java, .NET, TypeScript, and React.
+- `OfficialResourceProvider` fetches only HTTPS resources from the configured official-domain allowlist.
 - `ResourceAnalyzer` converts fetched resources into normalized evidence.
 - `KnowledgeCoordinator` runs the selected branches and passes their evidence to the final generator.
 - `QdrantVectorStore` stores source-aware chunks with stable identifiers for repeatable indexing.
@@ -69,13 +71,15 @@ Ask a question, or type 'exit' to quit.
 
 Questions mentioning an attached document, PDF, or document content use the local Qdrant knowledge base. Questions asking for official, current, documentation, or API-reference information use the allowlisted official sources. A question that requests both attached context and current official information uses both branches.
 
-Official research currently uses a small built-in Microsoft/.NET catalog:
+Official research uses a technology catalog. For example:
 
-- `learn.microsoft.com`
-- `dotnet.microsoft.com`
-- `docs.microsoft.com`
+- Angular -> `angular.dev`
+- Java -> `docs.oracle.com` and `dev.java`
+- .NET/C#/ASP.NET Core -> `learn.microsoft.com` and `dotnet.microsoft.com`
+- TypeScript -> `typescriptlang.org`
+- React -> `react.dev`
 
-The allowlist is checked before fetching. Fetched pages are cited by URL. Attached material is cited by document name and page when page metadata is available.
+The technology is detected from the user query and matched against the catalog. The allowlist is checked before fetching. Retrieved official context and attached-document context are both passed to Ollama together with the original query. Fetched pages are cited by URL; attached material is cited by document name and page when page metadata is available.
 
 ## Configuration
 
@@ -115,9 +119,10 @@ They currently cover route selection and evidence analysis. A live smoke test re
 
 ## Trust boundaries and limitations
 
-- The initial external catalog is curated; this is not an open-web search engine.
+- The external catalog is curated; this is not an open-web search engine.
+- Semantic Kernel is pinned to `1.68.0`; NuGet currently reports a critical advisory for its transitive `Microsoft.SemanticKernel.Core` dependency. Review the advisory and upgrade when a patched release is available.
 - HTML extraction is intentionally lightweight and should be replaced with a stronger content parser as source coverage grows.
-- The current router is deterministic. A model-backed planner can implement the same `IQueryRouter` contract later.
+- The current route and technology classification are deterministic native functions executed inside the Semantic Kernel workflow. A model-backed planner can implement the same `IQueryRouter` contract later.
 - The resource analyzer currently normalizes source evidence and claims; it does not yet perform deep semantic claim verification.
 - Scanned PDFs, OCR, non-PDF formats, broad vendor coverage, and autonomous write actions are not implemented.
 - Remote Microsoft Foundry agent-to-agent communication is an extension point, not a local runtime dependency.
@@ -128,12 +133,14 @@ They currently cover route selection and evidence analysis. A live smoke test re
 RAGOnMyMac/
 ├── Agents/
 │   ├── AgentServices.cs
-│   └── KnowledgeCoordinator.cs
+│   ├── KnowledgeCoordinator.cs
+│   └── SemanticKernelAgentOrchestrator.cs
 ├── Configuration/
 │   └── KnowledgeHubOptions.cs
 ├── Knowledge/
 │   ├── OfficialResourceProvider.cs
-│   └── PdfKnowledgeSource.cs
+│   ├── PdfKnowledgeSource.cs
+│   └── TechnologyCatalog.cs
 ├── Models/
 │   ├── AgentModels.cs
 │   ├── DocumentChunk.cs

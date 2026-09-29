@@ -50,11 +50,12 @@ Console.WriteLine("Ask a question, or type 'exit' to quit.");
 
 var coordinator = new KnowledgeCoordinator(
         new RuleBasedQueryRouter(),
-        new OfficialResourceProvider(httpClient, options),
+    new OfficialResourceProvider(httpClient, options, new TechnologyCatalog(options)),
         new ResourceAnalyzer(),
         ollama,
         vectorStore,
-        options.RetrievalLimit);
+        options.RetrievalLimit,
+        new SemanticKernelAgentOrchestrator());
 
 while (true)
 {
